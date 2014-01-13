@@ -9,7 +9,16 @@
 void * receiveThread(void *);
 void * sendThread(void *);
 
+struct clientInfoNode {
+	int sockFd;
+	char alias[20];
+	struct clientInfoNode * next;
+}*head;
+
+
 int main(int argc, char *argv[]) {
+	
+	head = NULL;
 	
 	if(argc != 2 || atoi(argv[1])==0) {
 		fprintf(stderr, "format : %s <port no>\n", argv[0]) ;
@@ -79,6 +88,44 @@ int main(int argc, char *argv[]) {
 	close(sockFd);
 	return 0;
 }
+
+
+void addClient(int fd) {
+
+	struct clientInfoNode *node = malloc(sizeof(clientInfoNode));
+	memset(node, 0, sizeof(clientInfoNode));
+	node->sockFd = fd;
+	
+	if(head == NULL) 
+		head = node;
+	else {
+		struct clientInfoNode *ptr;
+		for(ptr=head;ptr->next!=null;ptr=ptr->next); //find out the last element
+		ptr->next=node;
+	}			
+}
+
+
+void remClient(int fd) {
+
+	struct clientInfoNode *ptr;
+
+	if(head->sockFd == fd) {
+		ptr = head;
+		head = ptr->next;
+		free(ptr);
+	}
+	else {	
+		for(ptr=head;ptr->next!=null;ptr=ptr->next) {
+			if(ptr->next->sockFd == fd) {
+				struct *del = ptr->next;
+				ptr->next = ptr->next->next;
+				free(del);
+			}
+		}
+	}
+}
+
 
 void * sendThread(void *fd) {
 
