@@ -6,14 +6,15 @@
 #include<string.h>
 #include<pthread.h>
 
-void addClient(int);
+void addClient(int, char *);
 void remClient(int);
 void * handleClient(void *);
-void broadcast(char *);
+void broadcast(char *, char *);
+void getAlias(int, char *);
 
 struct clientInfoNode {
 	int sockFd;
-	char alias[20];
+	char *alias;
 	struct clientInfoNode * next;
 }*head;
 
@@ -83,11 +84,12 @@ int main(int argc, char *argv[]) {
 }
 
 
-void addClient(int fd) {
+void addClient(int fd, char *alias) {
 
 	struct clientInfoNode *node = malloc(sizeof(struct clientInfoNode));
 	memset(node, 0, sizeof(struct clientInfoNode));
 	node->sockFd = fd;
+	node->alias=alias;
 	
 	if(head == NULL) 
 		head = node;
@@ -125,11 +127,15 @@ void * handleClient(void *fd) {
 
 	int cliFd = (int)fd;
 	int recvRes;
-	char buf[50];
+	char *buf, *alias;
+	buf = malloc(50);
+	alias = malloc(10);
 	
-	broadcast("A new client has joined\n");
+	getAlias(cliFd, alias);
 	
-	addClient(cliFd);
+	addClient(cliFd, alias);
+	
+	broadcast(alias, "I just connected!\n");
 		
 	while(1) {
 	
@@ -143,23 +149,51 @@ void * handleClient(void *fd) {
 			pthread_exit(NULL);
 		}
 		
+		
 		else if(recvRes == 0) {
 			remClient(cliFd);
 			close(cliFd);
 			pthread_exit(NULL);
 		}
 		
-		broadcast(buf);
+		broadcast(alias, buf);
 	}
 }
 
-void broadcast(char *msg) {
+void broadcast(char *alias, char *msg) {
 
+	char *newMsg;
+	newMsg = malloc(strlen(alias) + 3 + strlen(msg) + 1);
+	memset(newMsg, 0, strlen(alias) + 3 + strlen(msg) + 1);
+	
+	strcpy(newMsg, alias);
+	strcat(newMsg, " : ");
+	strcat(newMsg, msg);
+	newMsg[strlen(newMsg)]='\0';
 	struct clientInfoNode *ptr;
 	for(ptr=head;ptr!=NULL;ptr=ptr->next) {
-		if(send(ptr->sockFd, msg, strlen(msg), 0) < 0) {
+		if(send(ptr->sockFd, newMsg, strlen(newMsg), 0) < 0) {
 			perror("send");
 		}
 	}
 } 
-			 
+
+void getAlias(int cliFd, char *alias) {
+
+	char *msg = "Please provide an alias : ";
+	
+	if (send(cliFd, msg, strlen(msg)+1, 0) < 0 ) {
+		perror("send");
+		pthread_exit(NULL);
+	}
+	
+	if(recv(cliFd, alias, 10, 0) < 0) {
+		perror("recv");
+		pthread_exit(NULL);
+		
+	}
+	
+	alias[strlen(alias)-1]='\0';
+	
+}
+

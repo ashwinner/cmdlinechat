@@ -73,6 +73,7 @@ int main(int argc, char *argv[]) {
 			perror("send");
 			exit(1);
 		}
+		
 	}
 	
 	close(sockFd);
@@ -100,7 +101,7 @@ void * receive(void *fd) {
 			exit(2);
 		}
 		
-		printf("%s", recvBuf);
+		write(1, recvBuf, strlen(recvBuf)); //because printf is buffered and wont print until it encounters a new line
 		
 	}
 	
