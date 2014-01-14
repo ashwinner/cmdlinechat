@@ -43,8 +43,6 @@ int main(int argc, char *argv[]) {
 		perror("connect");
 		exit(1);
 	}
-
-	printf("Connected to server!! Start chatting!\n");
 	
 	int sendBytes;
 	char sendBuf[50];
@@ -102,7 +100,7 @@ void * receive(void *fd) {
 			exit(2);
 		}
 		
-		printf("Server : %s", recvBuf);
+		printf("%s", recvBuf);
 		
 	}
 	

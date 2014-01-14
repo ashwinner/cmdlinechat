@@ -6,8 +6,10 @@
 #include<string.h>
 #include<pthread.h>
 
-void * receiveThread(void *);
-void * sendThread(void *);
+void addClient(int);
+void remClient(int);
+void * handleClient(void *);
+void broadcast(char *);
 
 struct clientInfoNode {
 	int sockFd;
@@ -65,24 +67,15 @@ int main(int argc, char *argv[]) {
 			exit(1);
 		}
 	
-		printf("A client has connected!! Enjoy chatting!\n");
+		printf("Client Connected\n");
 
-		pthread_t sender, receiver;
+		pthread_t clientHandler;
 		
-		if(pthread_create(&sender, NULL, sendThread, (void *)cliFd)!=0) {
+		if(pthread_create(&clientHandler, NULL, handleClient, (void *)cliFd)!=0) {
 			perror("pthread_create");
 			exit(1);
 		}
 		
-		if(pthread_create(&receiver, NULL, receiveThread, (void *)cliFd)!=0) {
-			perror("pthread_create");
-			exit(1);
-		}
-
-		pthread_join(receiver, NULL);
-		pthread_cancel(sender);
-		printf("Client Disconnected\n");
-		close(cliFd);
 	}
 	
 	close(sockFd);
@@ -92,15 +85,15 @@ int main(int argc, char *argv[]) {
 
 void addClient(int fd) {
 
-	struct clientInfoNode *node = malloc(sizeof(clientInfoNode));
-	memset(node, 0, sizeof(clientInfoNode));
+	struct clientInfoNode *node = malloc(sizeof(struct clientInfoNode));
+	memset(node, 0, sizeof(struct clientInfoNode));
 	node->sockFd = fd;
 	
 	if(head == NULL) 
 		head = node;
 	else {
 		struct clientInfoNode *ptr;
-		for(ptr=head;ptr->next!=null;ptr=ptr->next); //find out the last element
+		for(ptr=head;ptr->next!=NULL;ptr=ptr->next); //find out the last element
 		ptr->next=node;
 	}			
 }
@@ -116,58 +109,57 @@ void remClient(int fd) {
 		free(ptr);
 	}
 	else {	
-		for(ptr=head;ptr->next!=null;ptr=ptr->next) {
+		for(ptr=head;ptr->next!=NULL;ptr=ptr->next) {
 			if(ptr->next->sockFd == fd) {
-				struct *del = ptr->next;
+				struct clientInfoNode *del = ptr->next;
 				ptr->next = ptr->next->next;
 				free(del);
+				break;
 			}
 		}
 	}
 }
 
 
-void * sendThread(void *fd) {
+void * handleClient(void *fd) {
 
 	int cliFd = (int)fd;
-	int sendRes;
-	char sendBuf[50];
-	while(1) {
-	
-		sendRes = 0;
-		memset(sendBuf, 0, 50);
-	
-		fgets(sendBuf, 49, stdin);
-	
-		if((sendRes = send(cliFd, sendBuf, 50, 0)) < 0) {
-			perror("recv");
-			pthread_exit(NULL);
-		}
-	}
-}
-	
-
-void * receiveThread(void * fd) {
-
-	int cliFd = (int) fd;
 	int recvRes;
-	char recvBuf[50];
+	char buf[50];
 	
+	addClient(cliFd);
+	
+	broadcast("A new client has joined\n");
+		
 	while(1) {
 	
 		recvRes=0;
-		memset(recvBuf, 0, 50);
+		memset(buf, 0, 50);
 	
-		if((recvRes = recv(cliFd, recvBuf, 50, 0)) < 0) {
-				perror("recv");
-				pthread_exit(NULL);
+		if((recvRes = recv(cliFd, buf, 50, 0)) < 0) {
+			perror("recv");
+			remClient(cliFd);
+			close(cliFd);
+			pthread_exit(NULL);
 		}
 		
 		else if(recvRes == 0) {
-				pthread_exit(NULL);
+			remClient(cliFd);
+			close(cliFd);
+			pthread_exit(NULL);
 		}
 		
-		printf("Client : %s", recvBuf);
+		broadcast(buf);
 	}
 }
+
+void broadcast(char *msg) {
+
+	struct clientInfoNode *ptr;
+	for(ptr=head;ptr!=NULL;ptr=ptr->next) {
+		if(send(ptr->sockFd, msg, strlen(msg), 0) < 0) {
+			perror("send");
+		}
+	}
+} 
 			 
