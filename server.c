@@ -127,9 +127,9 @@ void * handleClient(void *fd) {
 	int recvRes;
 	char buf[50];
 	
-	addClient(cliFd);
-	
 	broadcast("A new client has joined\n");
+	
+	addClient(cliFd);
 		
 	while(1) {
 	
