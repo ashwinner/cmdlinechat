@@ -8,6 +8,8 @@
 
 void* receive(void *fd);
 
+#define BUFFER_SIZE 100
+
 int main(int argc, char *argv[]) {
 
 	if(argc != 3) {
@@ -63,11 +65,11 @@ int main(int argc, char *argv[]) {
 	
 	while(1) {
 	
-		memset(sendBuf, 0, 50);
+		memset(sendBuf, 0, BUFFER_SIZE);
 		
 		sendBytes=0;
 	
-		fgets(sendBuf, 49, stdin);
+		fgets(sendBuf, BUFFER_SIZE, stdin);
 		
 		if((sendBytes = send(sockFd, sendBuf, strlen(sendBuf)+1, 0)) < 0 ) {
 			perror("send");
@@ -84,21 +86,21 @@ void * receive(void *fd) {
 
 	int sockFd = (int)fd;
 	
-	char recvBuf[50];
+	char recvBuf[BUFFER_SIZE];
 	int recvBytes;
 	
 	while(1) {
 	
-		memset(recvBuf, 0, 50);
+		memset(recvBuf, 0, BUFFER_SIZE);
 		recvBytes = 0;
 		
-		if((recvBytes = recv(sockFd, recvBuf, 50, 0)) < 0) {
+		if((recvBytes = recv(sockFd, recvBuf, BUFFER_SIZE, 0)) < 0) {
 			perror("recv");
-			exit(2);
+			exit(1);
 		}
 		else if (recvBytes == 0) {
 			fprintf(stderr, "Server Disconnected\n");
-			exit(2);
+			exit(1);
 		}
 		
 		write(1, recvBuf, strlen(recvBuf)); //because printf is buffered and wont print until it encounters a new line
