@@ -5,13 +5,19 @@
 #include<sys/socket.h>
 #include<netdb.h>
 #include<pthread.h>
+#include<signal.h>
+
 
 void* receive(void *fd);
+
+void onInterrupt(int dummy) { exit(1); }
 
 #define BUFFER_SIZE 100
 
 int main(int argc, char *argv[]) {
 
+ signal(SIGINT, onInterrupt);
+ 
 	if(argc != 3) {
 	
 	fprintf(stderr, "Format: %s <host> <port no>\n", argv[0]);
@@ -40,14 +46,53 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 
+
 	if(connect(sockFd, res->ai_addr, res->ai_addrlen) < 0 )	{
 		
 		perror("connect");
 		exit(1);
 	}
 	
-	int sendBytes;
-	char sendBuf[50];
+	int sendBytes, recvBytes;
+	char sendBuf[50], recvBuf[50];
+		
+	char uname[10], password[10];
+	
+	do {
+		write(1, "Enter username : ", 18);
+		fgets(uname, 10, stdin);
+		
+		uname[strlen(uname)-1]='\0';
+		char c;
+		if(sscanf(uname,"user-%*d%c\n", &c)>-1) {
+			printf("Invalid username. Username should be of the form \"user-1\" \"user-2\" etc\n");
+			continue;
+		}
+		write(1, "Enter password : ", 18);
+		fgets(password, 10, stdin);
+	
+		password[strlen(password)-1]='\0';
+		
+		
+		if((sendBytes = send(sockFd, uname, strlen(uname)+1, 0)) < 0 ) {
+			perror("send");
+			exit(1);
+		}
+	
+		if((sendBytes = send(sockFd, password, strlen(password)+1, 0)) < 0 ) {
+			perror("send");
+			exit(1);
+		}
+	
+		if((recvBytes = recv(sockFd, recvBuf, 50, 0)) < 0 ) {
+			perror("recv");
+			exit(1);
+		}
+	
+		write(1, recvBuf, strlen(recvBuf));
+	
+	} while(strcasecmp(recvBuf, "login success\n"));
+	
 	pthread_t receiver;
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
@@ -71,6 +116,12 @@ int main(int argc, char *argv[]) {
 	
 		fgets(sendBuf, BUFFER_SIZE, stdin);
 		
+		int num=-1;
+		sscanf(sendBuf, "To user-%d", &num);
+		if(num<0) {
+			printf("Message should be of the form \"To user-1 :\" \"To user-2 :\" etc\n");
+			continue;
+		}
 		if((sendBytes = send(sockFd, sendBuf, strlen(sendBuf)+1, 0)) < 0 ) {
 			perror("send");
 			exit(1);

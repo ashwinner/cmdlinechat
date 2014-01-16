@@ -5,17 +5,19 @@
 #include<netdb.h>
 #include<string.h>
 #include<pthread.h>
+#include<signal.h>
 
-void addClient(int, char *);
-void remClient(int);
+int login(int, char *, char *);
+void deactivate(int);
 void * handleClient(void *);
 void broadcast(char *, char *);
-void getAlias(int, char *);
-int isDuplicateAlias(char *);
+void showActiveUsers(int, char *);
+
 
 struct clientInfoNode {
 	int sockFd;
 	char *alias;
+	char *password;
 	struct clientInfoNode * next;
 }*head;
 
@@ -26,6 +28,7 @@ struct clientInfoNode {
 int main(int argc, char *argv[]) {
 	
 	head = NULL;
+	signal(SIGPIPE, SIG_IGN);
 	
 	if(argc != 2) {
 		fprintf(stderr, "format : %s <port no>\n", argv[0]) ;
@@ -101,11 +104,24 @@ int main(int argc, char *argv[]) {
 }
 
 
-void addClient(int fd, char *alias) {
+int login(int fd, char *alias, char *password) {
 
+	struct clientInfoNode *ptr;
+	
+	for(ptr=head;ptr!=NULL;ptr=ptr->next) 
+		if(!strcmp(alias, ptr->alias))
+			if(!strcmp(password, ptr->password)) {
+				ptr->sockFd = fd;
+				return 1;
+			}
+			
+			else
+				return 0;
+	
 	struct clientInfoNode *node = malloc(sizeof(struct clientInfoNode));
 	node->sockFd = fd;
 	node->alias=alias;
+	node->password=password;
 	node->next=NULL;
 	
 	if(head == NULL) 
@@ -114,142 +130,173 @@ void addClient(int fd, char *alias) {
 		struct clientInfoNode *ptr;
 		for(ptr=head;ptr->next!=NULL;ptr=ptr->next); //find out the last node and append the new node to the end of the list
 		ptr->next=node;
-	}			
+	}	
+	
+	return 1;		
 }
 
 
-void remClient(int fd) {
+void deactivate(int fd) {
 
 	struct clientInfoNode *ptr;
 
-	if(head->sockFd == fd) {				//if the node we are looking for is the head node, reassign head
-		ptr = head;
-		head = ptr->next;
-		free(ptr);
-	}
-	else {				
-		for(ptr=head;ptr->next!=NULL;ptr=ptr->next) { 			//otherwise, loop though the list
-			if(ptr->next->sockFd == fd) {				//find the node that is just before the required node
-				struct clientInfoNode *del = ptr->next;		
-				ptr->next = ptr->next->next;			//reassign its next pointer
-				free(del);
-				break;						//stop looping as soon as you have deleted the element
-										//(if you dont do this, you will get a segfault)
-			}
+	for(ptr=head;ptr!=NULL;ptr=ptr->next) 
+		if(ptr->sockFd == fd) {
+			ptr->sockFd=-1;
+			return;
 		}
-	}
 }
 
 
 void * handleClient(void *fd) {
 
 	int cliFd = (int)fd;
-	int recvRes;
-	char *buf, *alias;
+	int recvRes, sendRes;
+	char *buf, *alias, *password;
 	buf = malloc(BUFFER_SIZE);
 	alias = malloc(ALIAS_SIZE);
+	password = malloc(ALIAS_SIZE);
 	
-	getAlias(cliFd, alias);		//get an alias for the client					
+	while(1) {
 	
-	addClient(cliFd, alias);	//store client's details in the list
-	
-	broadcast(alias, "I just connected!\n");		//inform everyone that the new client has connected
+		if((recvRes = recv(cliFd, alias, ALIAS_SIZE, 0)) <= 0 ) {
+			perror("recv");
+			close(cliFd);
+			pthread_exit(NULL);
+		}
 		
-	while(1) {			//keep listening for stuff that the client has to say
+		if((recvRes = recv(cliFd, password, ALIAS_SIZE, 0)) <= 0 ) {
+			perror("recv");
+			close(cliFd);
+			pthread_exit(NULL);
+		}
+		
+		if(!login(cliFd, alias, password)) {
+			if((sendRes = send(cliFd, "Login failed\n", 14, 0)) < 0 ) {
+				perror("send");
+				close(cliFd);
+				pthread_exit(NULL);
+			}
+		}
+		
+		else {
+			if((sendRes = send(cliFd, "Login Success\n", 14, 0)) < 0 ) {
+				perror("send");
+				close(cliFd);
+				pthread_exit(NULL);
+			}
+			break;
+		}
+	}
+	
+	broadcast(alias, "has connected!");		//inform everyone that the new client has connected
+	
+	showActiveUsers(cliFd, alias);
+	
+	while(1) {						//keep listening for stuff that the client has to say
 	
 		recvRes=0;
-		memset(buf, 0, BUFFER_SIZE);
+		bzero(buf, BUFFER_SIZE);
 	
 		if((recvRes = recv(cliFd, buf, BUFFER_SIZE, 0)) < 0) {		//if there's some error in receiving, remove client and close connection
 			perror("recv");
-			broadcast(alias, "Client disconnected\n");
-			remClient(cliFd);
+			broadcast(alias, "has disconnected");
+			deactivate(cliFd);
 			close(cliFd);
 			pthread_exit(NULL);
 		}
 		
 		
 		else if(recvRes == 0) {			//client disconnected. remove client and close connection
-			broadcast(alias, "Client disconnected\n");
-			remClient(cliFd);
+			broadcast(alias, "has disconnected");
+			deactivate(cliFd);
 			close(cliFd);
 			pthread_exit(NULL);
 		}
 		
-		broadcast(alias, buf);			//otherwise, broadcast the stuff that the client sent to everyone, along with his alias
+		int sendchatRes;
+		if((sendchatRes = (sendchat(alias, buf))) < 0) {
+		
+			if(sendchatRes == -1)
+				strcpy(buf, "User is currently not online\n");
+			else
+				strcpy(buf, "User doesnt exist\n");
+				
+			send(cliFd, buf, strlen(buf), 0);
+		}
 	}
 }
 
 void broadcast(char *alias, char *msg) {
 
 	char *newMsg;
-	newMsg = malloc(strlen(alias) + 3 + strlen(msg) + 1);
-	memset(newMsg, 0, strlen(alias) + 3 + strlen(msg) + 1);
-	
-	strcpy(newMsg, alias);
-	strcat(newMsg, " : ");
-	strcat(newMsg, msg);
+	newMsg = malloc(strlen(alias) + 1 + strlen(msg) + 2);
+	sprintf(newMsg, "%s %s\n", alias, msg);
 	newMsg[strlen(newMsg)]='\0';
 	struct clientInfoNode *ptr;
-	for(ptr=head;ptr!=NULL;ptr=ptr->next) {					//send out the message to everyone in the list
-		if(send(ptr->sockFd, newMsg, strlen(newMsg), 0) < 0) {
-			perror("send");
-		}
+	
+	for(ptr=head;ptr!=NULL;ptr=ptr->next) {					//send out the message to everyone in the list who is active
+		if(ptr->sockFd > 0) 		
+			if(send(ptr->sockFd, newMsg, strlen(newMsg), 0) < 0) {
+				perror("send");
+			}
 	}
 } 
 
-void getAlias(int cliFd, char *alias) {
+void showActiveUsers(int cliFd, char *alias) {
 
-	char *msg1 = "Please provide an alias : ";
-	char *msg2 = "Please enter a valid alias : ";
-	char *msg3 = "Sorry! That alias is already taken. Please choose a different one : ";
+	char *msg = "The following users are currently online : \n";
 	
+	int msglen = strlen(msg);
 	
-	if (send(cliFd, msg1, strlen(msg1), 0) < 0 ) {			//first, request an alias
-		perror("send");
-		pthread_exit(NULL);
+	struct clientInfoNode *ptr;
+	for (ptr=head;ptr!=NULL;ptr=ptr->next) {
+		if(ptr->sockFd > 0)
+			msglen+=strlen(ptr->alias)+1;
 	}
 	
-	do {								//do until the alias the client enters is valid
-		memset(alias, 0, ALIAS_SIZE);
-		
-		if(recv(cliFd, alias, ALIAS_SIZE, 0) < 0) {
-			perror("recv");
-			pthread_exit(NULL);
-		
+	char *newMsg = malloc(msglen+1);
+	strcpy(newMsg, msg);
+	for(ptr=head;ptr!=NULL;ptr=ptr->next) {
+		if(ptr->sockFd>0) {
+			strcat(newMsg, ptr->alias);
+			strcat(newMsg, "\n");
 		}
-		
-		alias[strlen(alias)-1]='\0';				//every message is terminated by a new line. replace that new line with \0
+	}
 	
-		if(!strcmp(alias, "")) {				//is the alias the empty string?
-			if (send(cliFd, msg2, strlen(msg2), 0) < 0 ) {
-				perror("send");
-				pthread_exit(NULL);
-			}
-		}
+	newMsg[strlen(newMsg)]='\0';
 	
-		else if(isDuplicateAlias(alias)) {			//is the alias already taken?
-			if (send(cliFd, msg3, strlen(msg3), 0) < 0 ) {
-				perror("send");
-				pthread_exit(NULL);
-			}
-		}
-		
-		else 							//its a valid alias!!
-			break;
-	} while(1);
-	
-	return;
-	
+	if(send(cliFd, newMsg, strlen(newMsg), 0) < 0) {
+		perror("send");
+		broadcast(alias, "has disconnected\n");
+		deactivate(cliFd);
+		close(cliFd);
+		pthread_exit(NULL);
+	}
 }
 
-int isDuplicateAlias(char *alias) {
+int sendchat (char *senderAlias, char *msg) {
+
+	char *receiverAlias = malloc(ALIAS_SIZE);
+	char *actualMsg = malloc(strlen(msg));
+	sscanf(msg, "%*s %s : %[^\n]s", receiverAlias, actualMsg);
+	actualMsg[strlen(actualMsg)]='\n';
+	actualMsg[strlen(actualMsg)+1]='\0';
 
 	struct clientInfoNode *ptr;
-	
-	for(ptr=head;ptr!=NULL;ptr=ptr->next) 
-		if(!strcasecmp(alias, ptr->alias))
-			return 1;
-	
-	return 0;
+	for(ptr=head;ptr!=NULL;ptr=ptr->next) {
+		if(!strcmp(receiverAlias, ptr->alias))
+			if(ptr->sockFd > 0) {
+			
+				char *chatMsg = malloc(strlen(senderAlias) + 3 + strlen(actualMsg) + 1);
+				sprintf(chatMsg, "%s : %s", senderAlias, actualMsg);
+				chatMsg[strlen(chatMsg)]='\0';
+				send(ptr->sockFd, chatMsg, strlen(chatMsg), 0);
+				return 1;
+			}
+			else
+				return -1;
+		}
+		
+	return -2;
 }
