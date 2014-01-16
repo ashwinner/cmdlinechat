@@ -5,18 +5,13 @@
 #include<sys/socket.h>
 #include<netdb.h>
 #include<pthread.h>
-#include<signal.h>
-
 
 void* receive(void *fd);
 
-void onInterrupt(int dummy) { exit(1); }
-
 #define BUFFER_SIZE 100
+#define USERNAME_SIZE 15
 
 int main(int argc, char *argv[]) {
-
- signal(SIGINT, onInterrupt);
  
 	if(argc != 3) {
 	
@@ -54,25 +49,31 @@ int main(int argc, char *argv[]) {
 	}
 	
 	int sendBytes, recvBytes;
-	char sendBuf[50], recvBuf[50];
+	char buf[BUFFER_SIZE];
 		
-	char uname[10], password[10];
+	char uname[USERNAME_SIZE], password[USERNAME_SIZE];
 	
 	do {
-		write(1, "Enter username : ", 18);
-		fgets(uname, 10, stdin);
+		
+		char *msg1 = "Enter username : ";
+		write(1, msg1, strlen(msg1));
+		
+		fgets(uname, USERNAME_SIZE, stdin);
 		
 		uname[strlen(uname)-1]='\0';
+		
 		char c;
 		if(sscanf(uname,"user-%*d%c\n", &c)>-1) {
 			printf("Invalid username. Username should be of the form \"user-1\" \"user-2\" etc\n");
 			continue;
 		}
-		write(1, "Enter password : ", 18);
-		fgets(password, 10, stdin);
+		
+		char *msg2 = "Enter password : ";
+		write(1, msg2, strlen(msg2));
+		
+		fgets(password, USERNAME_SIZE, stdin);
 	
 		password[strlen(password)-1]='\0';
-		
 		
 		if((sendBytes = send(sockFd, uname, strlen(uname)+1, 0)) < 0 ) {
 			perror("send");
@@ -83,15 +84,22 @@ int main(int argc, char *argv[]) {
 			perror("send");
 			exit(1);
 		}
+		
+		bzero(buf, BUFFER_SIZE);
 	
-		if((recvBytes = recv(sockFd, recvBuf, 50, 0)) < 0 ) {
+		if((recvBytes = recv(sockFd, buf, BUFFER_SIZE, 0)) < 0 ) {
 			perror("recv");
 			exit(1);
 		}
+		
+		else if(recvBytes == 0) {
+			fprintf(stderr, "Server Disconnected\n");
+			exit(1);
+		}
 	
-		write(1, recvBuf, strlen(recvBuf));
+		write(1, buf, strlen(buf));
 	
-	} while(strcasecmp(recvBuf, "login success\n"));
+	} while(strcasecmp(buf, "login success\n"));
 	
 	pthread_t receiver;
 	pthread_attr_t attr;
@@ -110,19 +118,19 @@ int main(int argc, char *argv[]) {
 	
 	while(1) {
 	
-		memset(sendBuf, 0, BUFFER_SIZE);
+		memset(buf, 0, BUFFER_SIZE);
 		
 		sendBytes=0;
 	
-		fgets(sendBuf, BUFFER_SIZE, stdin);
+		fgets(buf, BUFFER_SIZE, stdin);
 		
-		int num=-1;
-		sscanf(sendBuf, "To user-%d", &num);
-		if(num<0) {
+		char c;
+		sscanf(buf, "%*[Tt]o user-%*d%*c%c", &c);
+		if(c!=':') {
 			printf("Message should be of the form \"To user-1 :\" \"To user-2 :\" etc\n");
 			continue;
 		}
-		if((sendBytes = send(sockFd, sendBuf, strlen(sendBuf)+1, 0)) < 0 ) {
+		if((sendBytes = send(sockFd, buf, strlen(buf)+1, 0)) < 0 ) {
 			perror("send");
 			exit(1);
 		}
@@ -137,15 +145,15 @@ void * receive(void *fd) {
 
 	int sockFd = (int)fd;
 	
-	char recvBuf[BUFFER_SIZE];
+	char buf[BUFFER_SIZE];
 	int recvBytes;
 	
 	while(1) {
 	
-		memset(recvBuf, 0, BUFFER_SIZE);
+		memset(buf, 0, BUFFER_SIZE);
 		recvBytes = 0;
 		
-		if((recvBytes = recv(sockFd, recvBuf, BUFFER_SIZE, 0)) < 0) {
+		if((recvBytes = recv(sockFd, buf, BUFFER_SIZE, 0)) < 0) {
 			perror("recv");
 			exit(1);
 		}
@@ -154,7 +162,7 @@ void * receive(void *fd) {
 			exit(1);
 		}
 		
-		write(1, recvBuf, strlen(recvBuf)); //because printf is buffered and wont print until it encounters a new line
+		write(1, buf, strlen(buf)); //because printf is buffered and wont print until it encounters a new line
 		
 	}
 	

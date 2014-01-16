@@ -5,7 +5,6 @@
 #include<netdb.h>
 #include<string.h>
 #include<pthread.h>
-#include<signal.h>
 
 int login(int, char *, char *);
 void deactivate(int);
@@ -16,19 +15,18 @@ void showActiveUsers(int, char *);
 
 struct clientInfoNode {
 	int sockFd;
-	char *alias;
+	char *username;
 	char *password;
 	struct clientInfoNode * next;
 }*head;
 
 #define BUFFER_SIZE 100
-#define ALIAS_SIZE 15
+#define USERNAME_SIZE 15
 #define BACKLOG 10
 
 int main(int argc, char *argv[]) {
 	
 	head = NULL;
-	signal(SIGPIPE, SIG_IGN);
 	
 	if(argc != 2) {
 		fprintf(stderr, "format : %s <port no>\n", argv[0]) ;
@@ -42,6 +40,7 @@ int main(int argc, char *argv[]) {
 	hint.ai_socktype=SOCK_STREAM;
 
 	int getAddrStatus = 0;
+	
 	if((getAddrStatus = getaddrinfo("localhost", argv[1], &hint, &res))!=0) {
 		fprintf(stderr, "Error getting address info : %s", gai_strerror(getAddrStatus));
 		exit(1);
@@ -81,8 +80,6 @@ int main(int argc, char *argv[]) {
 			exit(1);
 		}
 	
-		printf("Client Connected\n");
-
 		pthread_t clientHandler;
 		pthread_attr_t attr;
 		pthread_attr_init(&attr);
@@ -104,23 +101,23 @@ int main(int argc, char *argv[]) {
 }
 
 
-int login(int fd, char *alias, char *password) {
+int login(int fd, char *username, char *password) {
 
 	struct clientInfoNode *ptr;
 	
 	for(ptr=head;ptr!=NULL;ptr=ptr->next) 
-		if(!strcmp(alias, ptr->alias))
+		if(!strcmp(username, ptr->username))
 			if(!strcmp(password, ptr->password)) {
 				ptr->sockFd = fd;
 				return 1;
 			}
 			
 			else
-				return 0;
+				return -1;
 	
 	struct clientInfoNode *node = malloc(sizeof(struct clientInfoNode));
 	node->sockFd = fd;
-	node->alias=alias;
+	node->username=username;
 	node->password=password;
 	node->next=NULL;
 	
@@ -152,27 +149,30 @@ void * handleClient(void *fd) {
 
 	int cliFd = (int)fd;
 	int recvRes, sendRes;
-	char *buf, *alias, *password;
-	buf = malloc(BUFFER_SIZE);
-	alias = malloc(ALIAS_SIZE);
-	password = malloc(ALIAS_SIZE);
+	char *username, *password;
+	username = malloc(USERNAME_SIZE);
+	password = malloc(USERNAME_SIZE);
 	
 	while(1) {
 	
-		if((recvRes = recv(cliFd, alias, ALIAS_SIZE, 0)) <= 0 ) {
+		if((recvRes = recv(cliFd, username, USERNAME_SIZE, 0)) <= 0 ) {
 			perror("recv");
 			close(cliFd);
 			pthread_exit(NULL);
 		}
 		
-		if((recvRes = recv(cliFd, password, ALIAS_SIZE, 0)) <= 0 ) {
+		if((recvRes = recv(cliFd, password, USERNAME_SIZE, 0)) <= 0 ) {
 			perror("recv");
 			close(cliFd);
 			pthread_exit(NULL);
 		}
 		
-		if(!login(cliFd, alias, password)) {
-			if((sendRes = send(cliFd, "Login failed\n", 14, 0)) < 0 ) {
+		int loginRes;
+		if((loginRes = login(cliFd, username, password)) < 0) {
+		
+			char *msg = "Incorrect password\n";
+			
+			if((sendRes = send(cliFd, msg, strlen(msg), 0)) < 0 ) {
 				perror("send");
 				close(cliFd);
 				pthread_exit(NULL);
@@ -180,7 +180,9 @@ void * handleClient(void *fd) {
 		}
 		
 		else {
-			if((sendRes = send(cliFd, "Login Success\n", 14, 0)) < 0 ) {
+			char *msg = "Login Success\n";
+			
+			if((sendRes = send(cliFd, msg, strlen(msg), 0)) < 0 ) {
 				perror("send");
 				close(cliFd);
 				pthread_exit(NULL);
@@ -189,9 +191,12 @@ void * handleClient(void *fd) {
 		}
 	}
 	
-	broadcast(alias, "has connected!");		//inform everyone that the new client has connected
+	broadcast(username, "has connected!");		//inform everyone that the new client has connected
 	
-	showActiveUsers(cliFd, alias);
+	showActiveUsers(cliFd, username);
+	
+	char *buf;
+	buf = malloc(BUFFER_SIZE);
 	
 	while(1) {						//keep listening for stuff that the client has to say
 	
@@ -200,7 +205,7 @@ void * handleClient(void *fd) {
 	
 		if((recvRes = recv(cliFd, buf, BUFFER_SIZE, 0)) < 0) {		//if there's some error in receiving, remove client and close connection
 			perror("recv");
-			broadcast(alias, "has disconnected");
+			broadcast(username, "has disconnected");
 			deactivate(cliFd);
 			close(cliFd);
 			pthread_exit(NULL);
@@ -208,30 +213,37 @@ void * handleClient(void *fd) {
 		
 		
 		else if(recvRes == 0) {			//client disconnected. remove client and close connection
-			broadcast(alias, "has disconnected");
+			broadcast(username, "has disconnected");
 			deactivate(cliFd);
 			close(cliFd);
 			pthread_exit(NULL);
 		}
 		
 		int sendchatRes;
-		if((sendchatRes = (sendchat(alias, buf))) < 0) {
+		if((sendchatRes = (sendchat(username, buf))) < 0) {
 		
 			if(sendchatRes == -1)
 				strcpy(buf, "User is currently not online\n");
 			else
 				strcpy(buf, "User doesnt exist\n");
 				
-			send(cliFd, buf, strlen(buf), 0);
+			if(send(cliFd, buf, strlen(buf), 0) < 0) {
+				perror("send");
+				broadcast(username, "has disconnected");
+				deactivate(cliFd);
+				close(cliFd);
+				pthread_exit(NULL);
+			}
+				
 		}
 	}
 }
 
-void broadcast(char *alias, char *msg) {
+void broadcast(char *username, char *msg) {
 
 	char *newMsg;
-	newMsg = malloc(strlen(alias) + 1 + strlen(msg) + 2);
-	sprintf(newMsg, "%s %s\n", alias, msg);
+	newMsg = malloc(strlen(username) + 1 + strlen(msg) + 2);
+	sprintf(newMsg, "%s %s\n", username, msg);
 	newMsg[strlen(newMsg)]='\0';
 	struct clientInfoNode *ptr;
 	
@@ -243,53 +255,54 @@ void broadcast(char *alias, char *msg) {
 	}
 } 
 
-void showActiveUsers(int cliFd, char *alias) {
+void showActiveUsers(int cliFd, char *username) {
 
 	char *msg = "The following users are currently online : \n";
 	
-	int msglen = strlen(msg);
+	int msglen = strlen(msg)+1;			//+1 for the extra new line character added in the end
 	
 	struct clientInfoNode *ptr;
 	for (ptr=head;ptr!=NULL;ptr=ptr->next) {
 		if(ptr->sockFd > 0)
-			msglen+=strlen(ptr->alias)+1;
+			msglen+=strlen(ptr->username)+1;
 	}
 	
 	char *newMsg = malloc(msglen+1);
 	strcpy(newMsg, msg);
 	for(ptr=head;ptr!=NULL;ptr=ptr->next) {
 		if(ptr->sockFd>0) {
-			strcat(newMsg, ptr->alias);
+			strcat(newMsg, ptr->username);
 			strcat(newMsg, "\n");
 		}
 	}
 	
+	strcat(newMsg, "\n");	
 	newMsg[strlen(newMsg)]='\0';
 	
 	if(send(cliFd, newMsg, strlen(newMsg), 0) < 0) {
 		perror("send");
-		broadcast(alias, "has disconnected\n");
+		broadcast(username, "has disconnected\n");
 		deactivate(cliFd);
 		close(cliFd);
 		pthread_exit(NULL);
 	}
 }
 
-int sendchat (char *senderAlias, char *msg) {
+int sendchat (char *senderUsername, char *msg) {
 
-	char *receiverAlias = malloc(ALIAS_SIZE);
+	char *receiverUsername = malloc(USERNAME_SIZE);
 	char *actualMsg = malloc(strlen(msg));
-	sscanf(msg, "%*s %s : %[^\n]s", receiverAlias, actualMsg);
+	sscanf(msg, "%*s %s : %[^\n]s", receiverUsername, actualMsg);
 	actualMsg[strlen(actualMsg)]='\n';
 	actualMsg[strlen(actualMsg)+1]='\0';
 
 	struct clientInfoNode *ptr;
 	for(ptr=head;ptr!=NULL;ptr=ptr->next) {
-		if(!strcmp(receiverAlias, ptr->alias))
+		if(!strcmp(receiverUsername, ptr->username))
 			if(ptr->sockFd > 0) {
 			
-				char *chatMsg = malloc(strlen(senderAlias) + 3 + strlen(actualMsg) + 1);
-				sprintf(chatMsg, "%s : %s", senderAlias, actualMsg);
+				char *chatMsg = malloc(strlen(senderUsername) + 3 + strlen(actualMsg) + 1);
+				sprintf(chatMsg, "%s : %s", senderUsername, actualMsg);
 				chatMsg[strlen(chatMsg)]='\0';
 				send(ptr->sockFd, chatMsg, strlen(chatMsg), 0);
 				return 1;
@@ -300,3 +313,4 @@ int sendchat (char *senderAlias, char *msg) {
 		
 	return -2;
 }
+
